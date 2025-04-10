@@ -1,4 +1,4 @@
-﻿using CounterStrikeSharp.API;
+using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Capabilities;
 using CounterStrikeSharp.API.Modules.Commands;
@@ -15,7 +15,7 @@ public class VipWeaponsMenu : BasePlugin
     public override string ModuleAuthor => "daffyy";
     public override string ModuleName => "[VIP] WeaponsMenu";
     public override string ModuleVersion => "v1.0.2";
-    
+
     private WeaponsMenu _weaponsMenu;
     private IVipCoreApi? _api;
     private PluginCapability<IVipCoreApi> PluginCapability { get; } = new("vipcore:core");
@@ -28,7 +28,7 @@ public class VipWeaponsMenu : BasePlugin
         _weaponsMenu = new WeaponsMenu(this, _api);
         _api.RegisterFeature(_weaponsMenu, FeatureType.Hide);
     }
-    
+
     public override void Unload(bool hotReload)
     {
         _api?.UnRegisterFeature(_weaponsMenu);
@@ -126,28 +126,7 @@ public class WeaponsMenu : VipFeatureBase
             if (_gameRules is { BuyTimeEnded: true } || !player.PlayerPawn.Value.InBuyZone)
                 return;
 
-            RemoveWeapons(player);
-
-            selection.Weapons.ForEach(w =>
-            {
-                if (_grenadeIndex.TryGetValue(w, out var ammoIndex))
-                {
-                    if (player.PlayerPawn.Value?.WeaponServices?.Ammo[ammoIndex] == 0)
-                        player.GiveNamedItem(w);
-                    else
-                    {
-                        if (player.PlayerPawn.Value?.WeaponServices?.MyWeapons
-                                .ToList()
-                                .Find(m => m.Value != null && m.Value.DesignerName == w) == null)
-                            player.GiveNamedItem(w);
-                    }
-                }
-                else
-                {
-                    player.GiveNamedItem(w);
-                }
-            });
-
+            GiveWeapons(player, selection.Weapons);
             return;
         }
 
@@ -158,43 +137,26 @@ public class WeaponsMenu : VipFeatureBase
 
         var menu = new ChatMenu(GetTranslatedText("weaponsmenu.title"))
         {
-            ExitButton = true,
-            //PostSelectAction = PostSelectAction.Close
+            ExitButton = true
         };
 
         foreach (var package in player.Team == CsTeam.Terrorist ? weaponsSettings.T : weaponsSettings.CT)
         {
-            menu.AddMenuOption($"{GetTranslatedText("weaponsmenu.fromround", package.Value.Round)} {package.Key}", (_, _) =>
-            {
-                if (GetActualRound() < package.Value.Round)
-                    return;
-                if (_gameRules is { BuyTimeEnded: true } || !player.PlayerPawn.Value.InBuyZone)
-                    return;
-
-                RemoveWeapons(player);
-
-                package.Value.Weapons.ForEach(w =>
+            menu.AddMenuOption(
+                GetTranslatedText("weaponsmenu.fromround", package.Value.Round) + " " + package.Key,
+                (_, _) =>
                 {
-                    if (_grenadeIndex.TryGetValue(w, out var ammoIndex))
-                    {
-                        if (player.PlayerPawn.Value?.WeaponServices?.Ammo[ammoIndex] == 0)
-                            player.GiveNamedItem(w);
-                        else
-                        {
-                            if (player.PlayerPawn.Value?.WeaponServices?.MyWeapons.ToList()
-                                    .Find(m => m.Value != null && m.Value.DesignerName == w) == null)
-                                player.GiveNamedItem(w);
-                        }
-                    } 
-                    else
-                    {
-                        player.GiveNamedItem(w);
-                    }
-                });
+                    if (GetActualRound() < package.Value.Round)
+                        return;
+                    if (_gameRules is { BuyTimeEnded: true } || !player.PlayerPawn.Value.InBuyZone)
+                        return;
 
-                CreateSubMenu(player, package.Value);
+                    GiveWeapons(player, package.Value.Weapons);
+                    CreateSubMenu(player, package.Value);
 
-            }, GetActualRound() < package.Value.Round);
+                },
+                GetActualRound() < package.Value.Round
+            );
         }
 
         menu.Open(player);
@@ -221,11 +183,30 @@ public class WeaponsMenu : VipFeatureBase
         menu.Open(player);
     }
 
+    private void GiveWeapons(CCSPlayerController player, List<string> weapons)
+    {
+        weapons.ForEach(w =>
+        {
+            if (_grenadeIndex.TryGetValue(w, out var ammoIndex))
+            {
+                if (player.PlayerPawn.Value?.WeaponServices?.Ammo[ammoIndex] == 0)
+                    player.GiveNamedItem(w);
+                else if (player.PlayerPawn.Value?.WeaponServices?.MyWeapons.ToList()
+                         .Find(m => m.Value != null && m.Value.DesignerName == w) == null)
+                    player.GiveNamedItem(w);
+            }
+            else
+            {
+                player.GiveNamedItem(w);
+            }
+        });
+    }
+
     private static int GetActualRound()
     {
         return _gameRules?.RoundsPlayedThisPhase + 1 ?? 1;
     }
-    
+
     private bool GetPlayerSelection(CCSPlayerController player, out WeaponSelection? selection)
     {
         if (!_playerSelection.TryGetValue(player.TeamNum, out var playerDict))
@@ -243,7 +224,7 @@ public class WeaponsMenu : VipFeatureBase
         selection = null;
         return false;
     }
-    
+
     private void AddPlayerSelection(CCSPlayerController player, WeaponSelection selection)
     {
         if (!_playerSelection.TryGetValue(player.TeamNum, out var value))
@@ -254,10 +235,9 @@ public class WeaponsMenu : VipFeatureBase
 
         value[player] = selection;
     }
-    
+
     private void RemovePlayerSelection(CCSPlayerController player)
     {
-        // Collect team numbers that need to be removed after the player is removed
         var teamsToRemove = new List<int>();
 
         foreach (var teamEntry in _playerSelection)
@@ -274,40 +254,7 @@ public class WeaponsMenu : VipFeatureBase
         foreach (var teamNum in teamsToRemove)
             _playerSelection.Remove(teamNum);
     }
-
-    private static void RemoveWeapons(CCSPlayerController player)
-    {
-        if (player.PlayerPawn.Value?.WeaponServices == null || player.PlayerPawn.Value?.ItemServices == null)
-            return;
-
-        var weapons = player.PlayerPawn.Value.WeaponServices.MyWeapons.ToList();
-
-        if (weapons.Count == 0)
-            return;
-
-        foreach (var weapon in weapons)
-        {
-            if (!weapon.IsValid || weapon.Value == null ||
-                !weapon.Value.IsValid)
-                continue;
-
-            if (weapon.Value.Entity == null) continue;
-            if (!weapon.Value.VisibleinPVS) continue;
-
-            var weaponName = weapon.Value.DesignerName;
-            var weaponData = weapon.Value.As<CCSWeaponBase>().VData;
-
-            if (weaponData == null)
-                continue;
-
-            if (weaponData.GearSlot is gear_slot_t.GEAR_SLOT_RIFLE or gear_slot_t.GEAR_SLOT_PISTOL)
-            {
-                weapon.Value?.AddEntityIOEvent("Kill", weapon.Value, null, "", 0.12f);
-            }
-        }
-    }
 }
-
 
 public class WeaponsMenuSettings
 {
